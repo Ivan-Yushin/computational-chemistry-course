@@ -1,0 +1,24 @@
+# Квантовая химия и молекулярная динамика.
+# Занятия 1–9 (PySCF, оптимизация геометрии, сканирование ППЭ, метадинамика).
+# Профиль ресурсов в DataSphere: CPU (многоядерный), GPU не нужен.
+-r requirements-common.txt
+
+# --- электронная структура ---
+pyscf
+pyscf-dispersion        # эмпирические поправки D3/D4 (import dftd3)
+geometric               # оптимизатор геометрии для pyscf.geomopt
+
+# --- структуры и визуализация молекул ---
+ase
+PeptideBuilder
+
+# --- молекулярная динамика / метадинамика (Занятие 9) ---
+openmm
+openmmforcefields
+pdbfixer
+parmed
+mdtraj
+MDAnalysis
+biopython
+openbabel-wheel
+thermo

@@ -1,0 +1,16 @@
+# Единые переводы строк: преподаватель работает в Windows, студенты — в Linux
+# (Yandex DataSphere). Без этого git-конфиг Windows (core.autocrlf=true) и Linux
+# дают разные версии одних и тех же файлов.
+* text=auto eol=lf
+
+# Ноутбуки — это JSON, их нужно сравнивать построчно (diff в Pull Request).
+*.ipynb text eol=lf
+*.csv   text eol=lf
+
+# Бинарные материалы — без diff и без преобразования переводов строк.
+*.pptx binary
+*.pdf  binary
+*.docx binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary

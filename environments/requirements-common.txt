@@ -1,0 +1,15 @@
+# Базовые зависимости — нужны почти во всех занятиях.
+# Подключаются автоматически из requirements-qc.txt и requirements-ml.txt.
+rdkit
+numpy
+pandas
+scipy
+matplotlib
+plotly
+seaborn
+py3Dmol
+ipywidgets
+requests
+tqdm
+rich
+nbformat

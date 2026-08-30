@@ -1,0 +1,17 @@
+# Машинное обучение и хемоинформатика.
+# Занятия 11–12 (дескрипторы, классические модели, графовые нейросети).
+# Профиль ресурсов в DataSphere: GPU (обучение TensorFlow / spektral).
+-r requirements-common.txt
+
+# --- глубокое обучение ---
+# ВАЖНО: держим TensorFlow < 2.16, чтобы остался Keras 2.x.
+# С TF >= 2.16 подтягивается Keras 3, и `import keras` + spektral ломаются.
+tensorflow>=2.13,<2.16
+# keras отдельно НЕ ставим — он приходит вместе с tensorflow (Keras 2.x).
+spektral                 # графовые нейросети (GNN) поверх Keras
+
+# --- классические модели и признаки ---
+scikit-learn
+umap-learn
+networkx
+numba
