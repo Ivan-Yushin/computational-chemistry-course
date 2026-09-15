@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.ipynb text eol=lf
+*.csv   text eol=lf
+
+*.pptx binary
+*.pdf  binary
+*.docx binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary
