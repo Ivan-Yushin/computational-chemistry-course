@@ -1,0 +1,53 @@
+<ROSETTASCRIPTS>
+  <!-- Протокол RosettaLigand: докинг малой молекулы в карман белка.
+       Лиганд должен быть отдельной цепью X. Занятие 9, раздел 2.4.2.
+       Meiler, Baker (2006) https://doi.org/10.1002/prot.21086
+       DeLuca, Khar, Meiler (2015) https://doi.org/10.1371/journal.pone.0132508 -->
+
+  <SCOREFXNS>
+    <ScoreFunction name="ligand_soft_rep" weights="ligand_soft_rep"/>   <!-- смягчённое отталкивание для поиска -->
+    <ScoreFunction name="hard_rep" weights="ligand"/>                   <!-- полная функция для финальной позы -->
+  </SCOREFXNS>
+
+  <SCORINGGRIDS ligand_chain="X" width="15">                            <!-- сетка 15 Å вокруг лиганда -->
+    <ClassicGrid grid_name="classic" weight="1.0"/>
+  </SCORINGGRIDS>
+
+  <!-- Какие боковые цепи и какой кусок остова считать подвижными -->
+  <LIGAND_AREAS>
+    <LigandArea name="dock_sc"  chain="X" cutoff="6.0" add_nbr_radius="true"  all_atom_mode="false"/>
+    <LigandArea name="final_sc" chain="X" cutoff="6.0" add_nbr_radius="true"  all_atom_mode="false"/>
+    <LigandArea name="final_bb" chain="X" cutoff="7.0" add_nbr_radius="false" all_atom_mode="true" Calpha_restraints="0.3"/>
+  </LIGAND_AREAS>
+
+  <INTERFACE_BUILDERS>
+    <InterfaceBuilder name="sc_dock"  ligand_areas="dock_sc"/>
+    <InterfaceBuilder name="sc_final" ligand_areas="final_sc"/>
+    <InterfaceBuilder name="bb_final" ligand_areas="final_bb" extension_window="3"/>
+  </INTERFACE_BUILDERS>
+
+  <MOVEMAP_BUILDERS>
+    <MoveMapBuilder name="docking" sc_interface="sc_dock"  minimize_water="false"/>
+    <MoveMapBuilder name="final"   sc_interface="sc_final" bb_interface="bb_final" minimize_water="false"/>
+  </MOVEMAP_BUILDERS>
+
+  <MOVERS>
+    <!-- 1. Метрополис по положению и ориентации лиганда на сетке: 500 шагов, сдвиг до 0.2 Å, поворот до 20° -->
+    <Transform name="transform" chain="X" box_size="7.0" move_distance="0.2" angle="20"
+               cycles="500" repeats="1" temperature="5"/>
+    <!-- 2. Метрополис с малыми сдвигами лиганда и переупаковкой боковых цепей кармана -->
+    <HighResDocker name="high_res_docker" cycles="6" repack_every_Nth="3"
+                   scorefxn="ligand_soft_rep" movemap_builder="docking"/>
+    <!-- 3. Минимизация лиганда, боковых цепей и остова вокруг него -->
+    <FinalMinimizer name="final" scorefxn="hard_rep" movemap_builder="final"/>
+    <!-- 4. Энергия связывания: E(комплекс) - E(белок и лиганд, разведённые далеко) -->
+    <InterfaceScoreCalculator name="add_scores" chains="X" scorefxn="hard_rep"/>
+  </MOVERS>
+
+  <PROTOCOLS>
+    <Add mover="transform"/>
+    <Add mover="high_res_docker"/>
+    <Add mover="final"/>
+    <Add mover="add_scores"/>
+  </PROTOCOLS>
+</ROSETTASCRIPTS>

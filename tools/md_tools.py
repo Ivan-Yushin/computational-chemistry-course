@@ -8,6 +8,7 @@
     show("md.gro", "md.xtc", b=rmsf_nm, cmd="spectrum b, blue_white_red, name CA")
     show("md.gro", "md.xtc", data={"rmsf": rmsf_nm}, cmd="show sticks, rmsf > 0.1; label name CA, rmsf")
     show("md.gro", "md.xtc", stride=5)  # каждый 5-й кадр
+    show("alphaR/ala2.pdb", "beta/ala2.pdb")  # одноимённые файлы — состояния одного объекта, разноимённые — разные объекты
 """
 import base64
 import json
@@ -153,7 +154,10 @@ def _numbers(values, n, what, struct):
 def _atom_data(paths, data, b):
     if data is None and b is None:
         return None, None
-    struct = [p for p in paths if p.lower().endswith(STRUCTURES)][0]
+    structs = [p for p in paths if p.lower().endswith(STRUCTURES)]
+    if len(structs) != 1:
+        raise ValueError("data= и b= — только для одной структуры (.gro или .pdb), передано: {}".format(len(structs)))
+    struct = structs[0]
     n = _natoms(struct)
     clean = None
     if data is not None:
@@ -204,10 +208,12 @@ def _check(paths):
         raise ValueError("Не файл GROMACS: {} (нужны .gro, .pdb, .xtc, .trr)".format(", ".join(other)))
     tops = [p for p in paths if p.lower().endswith(STRUCTURES)]
     trajs = [p for p in paths if p.lower().endswith(TRAJECTORIES)]
-    if len(tops) != 1:
-        raise ValueError("Нужен ровно один файл структуры (.gro или .pdb), передано: {}".format(len(tops)))
+    if not tops:
+        raise ValueError("Нужен хотя бы один файл структуры (.gro или .pdb)")
     if len(trajs) > 1:
         raise ValueError("Траектория — не больше одной (.xtc или .trr), передано: {}".format(len(trajs)))
+    if trajs and len(tops) != 1:
+        raise ValueError("С траекторией — ровно одна структура (.gro или .pdb), передано: {}".format(len(tops)))
     return paths
 
 
@@ -314,7 +320,9 @@ def show(*paths, height=600, compress=True, wrap=True, cmd=None, data=None, b=No
          stride=None, max_frames=MAX_FRAMES):
     """Показать структуру и, по желанию, траекторию GROMACS под ячейкой в WebMol.
 
-    paths    -- один .gro/.pdb и не больше одного .xtc/.trr (порядок любой)
+    paths    -- .gro/.pdb и не больше одного .xtc/.trr (порядок любой; с траекторией — одна структура);
+                одноимённые структуры — состояния одного объекта, разноимённые — разные объекты:
+                show("alphaR/ala2.pdb", "beta/ala2.pdb")
     height   -- высота окна, px
     compress -- сжимать текстовые файлы при передаче (.xtc/.trr сжимаются всегда)
     wrap     -- «целые молекулы»: собрать молекулы, разрезанные границей ячейки (переключается и в окне)
