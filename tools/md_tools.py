@@ -9,6 +9,8 @@
     show("md.gro", "md.xtc", data={"rmsf": rmsf_nm}, cmd="show sticks, rmsf > 0.1; label name CA, rmsf")
     show("md.gro", "md.xtc", stride=5)  # каждый 5-й кадр
     show("alphaR/ala2.pdb", "beta/ala2.pdb")  # одноимённые файлы — состояния одного объекта, разноимённые — разные объекты
+    show(mol, cmd="hide everything; show sticks")  # молекула RDKit с координатами (конформеры — состояния)
+    show({"gauche": gauche, "anti": anti})         # словарь: имена объектов — ключи
 """
 import base64
 import json
@@ -16,6 +18,7 @@ import math
 import os
 import re
 import struct
+import sys
 import uuid
 import zlib
 from html import escape
@@ -120,8 +123,117 @@ def _cmd_list(cmd):
 RESERVED = set("b q x y z name resn resi chain elem index id segi alt ss type pepseq model count all none "
                "and or not in like of within around expand gap beyond near_to first last byres bymol".split())
 
+# имя объекта-молекулы: латиница, цифры и _ (как имя выборки в WebMol), с буквы; не слово языка выборок
+# (SEL в viewer.js), не of и не sele
+OBJ_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+OBJ_RESERVED = set((
+    "acceptors all alt altloc and around b backbone beyond bonded bound_to bycalpha bycell bychain byfrag byfragment "
+    "bymol bymolecule byobj byobject byres byresi byresidue byring byseg bysegi bysegment cartoon_color center chain "
+    "color custom delocalized donors elem element enabled expand extend first fixed flag formal_charge gap guide het "
+    "hetatm hydro hydrogens id in index inorganic label last like masked metals model name near_to neighbor none not "
+    "nucleic numeric_type object or organic origin partial_charge pepseq polymer present protected protein q rank rep "
+    "resi resid resident residue resn resname restrained ribbon_color segi segid segment sidechain solvent ss state "
+    "stereo symbol text_type type visible within x y z of sele").split())
+
+
+class _Mol(object):
+    """Молекула RDKit из вызова: имя для просмотрщика (<объект>.pdb) и текст PDB."""
+
+    def __init__(self, name, text):
+        self.name, self.text = name, text
+
+
+def _is_mol(obj):
+    """Chem.Mol? Без импорта rdkit: пока он не загружен, молекул быть не может."""
+    rdchem = sys.modules.get("rdkit.Chem.rdchem")
+    return rdchem is not None and isinstance(obj, rdchem.Mol)
+
+
+def _is_top(p):
+    return isinstance(p, _Mol) or p.lower().endswith(STRUCTURES)
+
+
+def _obj_name(key):
+    """Ключ словаря — имя объекта как есть; неподходящее — ошибка, а не тихая замена."""
+    if not isinstance(key, str) or not OBJ_NAME.fullmatch(key):
+        raise ValueError("Имя молекулы — латиница, цифры и _ (с буквы, до 64 знаков): {!r}".format(key))
+    if key.lower() in OBJ_RESERVED:
+        raise ValueError("Имя молекулы {!r} занято языком выборок, возьмите другое".format(key))
+    return key
+
+
+def _prop_name(mol):
+    """Имя из _Name: кроме латиницы, цифр и _ — в «_»; с цифры или занятое — с приставкой mol_."""
+    if not mol.HasProp("_Name"):
+        return None
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", mol.GetProp("_Name")).strip("_")
+    if not name:
+        return None
+    if name[0].isdigit() or name.lower() in OBJ_RESERVED:
+        name = "mol_" + name
+    return name[:64]
+
+
+def _mol_pdb(mol, name):
+    """PDB из RDKit в памяти; несколько конформеров — блоки MODEL/ENDMDL, в WebMol — состояния объекта."""
+    if not mol.GetNumConformers():
+        raise ValueError("Молекула {} без координат (нет конформеров): сначала постройте геометрию — "
+                         "AllChem.EmbedMolecule(mol)".format(name))
+    from rdkit import Chem
+    return Chem.MolToPDBBlock(mol)
+
+
+def _expand(args):
+    """Аргументы по порядку: путь — строка, молекула RDKit или словарь {имя: молекула} — _Mol."""
+    items = []
+    for a in args:
+        if isinstance(a, dict):
+            low = {}
+            for key, mol in a.items():
+                if not _is_mol(mol):
+                    raise TypeError("Словарь молекул — {{имя: Chem.Mol}}, а у {!r}: {}".format(key, type(mol).__name__))
+                _obj_name(key)
+                if key.lower() in low:
+                    raise ValueError("Имена молекул {!r} и {!r} различаются только регистром, "
+                                     "а в WebMol это одно имя".format(low[key.lower()], key))
+                low[key.lower()] = key
+                items.append((key, mol))
+        elif _is_mol(a):
+            items.append((_prop_name(a), a))
+        elif isinstance(a, (list, tuple)) and any(_is_mol(m) for m in a):
+            raise TypeError("Молекулы — отдельными аргументами: show(m1, m2), show(*mols) или словарём {имя: молекула}")
+        else:
+            items.append(os.fspath(a))
+    # без имени — mol1, mol2, …; номер, занятый другим именем вызова, пропускается
+    taken = set(x[0].lower() for x in items if isinstance(x, tuple) and x[0])
+    taken.update(os.path.splitext(os.path.basename(x))[0].lower() for x in items if isinstance(x, str))
+    out, k = [], 0
+    for x in items:
+        if isinstance(x, tuple):
+            name, mol = x
+            if not name:
+                k += 1
+                while "mol{}".format(k) in taken:
+                    k += 1
+                name = "mol{}".format(k)
+            x = _Mol(name + ".pdb", _mol_pdb(mol, name))
+        out.append(x)
+    return out
+
+
+def _pdb_natoms(lines):
+    n = 0
+    for line in lines:
+        if line.startswith(("ATOM  ", "HETATM")):
+            n += 1
+        elif line.startswith(("ENDMDL", "END")) and n:
+            break
+    return n
+
 
 def _natoms(path):
+    if isinstance(path, _Mol):
+        return _pdb_natoms(path.text.splitlines())
     with open(path, encoding="utf-8", errors="replace") as fh:
         if path.lower().endswith(".gro"):
             fh.readline()
@@ -129,13 +241,7 @@ def _natoms(path):
                 return int(fh.readline().split()[0])
             except (IndexError, ValueError):
                 raise ValueError("{}: во второй строке нет числа атомов".format(path))
-        n = 0
-        for line in fh:
-            if line.startswith(("ATOM  ", "HETATM")):
-                n += 1
-            elif line.startswith(("ENDMDL", "END")) and n:
-                break
-        return n
+        return _pdb_natoms(fh)
 
 
 def _numbers(values, n, what, struct):
@@ -154,11 +260,11 @@ def _numbers(values, n, what, struct):
 def _atom_data(paths, data, b):
     if data is None and b is None:
         return None, None
-    structs = [p for p in paths if p.lower().endswith(STRUCTURES)]
+    structs = [p for p in paths if _is_top(p)]
     if len(structs) != 1:
         raise ValueError("data= и b= — только для одной структуры (.gro или .pdb), передано: {}".format(len(structs)))
-    struct = structs[0]
-    n = _natoms(struct)
+    n = _natoms(structs[0])
+    struct = structs[0].name if isinstance(structs[0], _Mol) else structs[0]
     clean = None
     if data is not None:
         if not isinstance(data, dict):
@@ -197,17 +303,18 @@ def _origin(url):
 
 
 def _check(paths):
+    paths = _expand(paths)
     if not paths:
         raise ValueError("Укажите файл: show('box.gro') или show('md.gro', 'md.xtc')")
-    paths = [os.fspath(p) for p in paths]
-    missing = [p for p in paths if not os.path.isfile(p)]
+    files = [p for p in paths if not isinstance(p, _Mol)]
+    missing = [p for p in files if not os.path.isfile(p)]
     if missing:
         raise FileNotFoundError("Нет файла: " + ", ".join(missing))
-    other = [p for p in paths if not p.lower().endswith(STRUCTURES + TRAJECTORIES)]
+    other = [p for p in files if not p.lower().endswith(STRUCTURES + TRAJECTORIES)]
     if other:
         raise ValueError("Не файл GROMACS: {} (нужны .gro, .pdb, .xtc, .trr)".format(", ".join(other)))
-    tops = [p for p in paths if p.lower().endswith(STRUCTURES)]
-    trajs = [p for p in paths if p.lower().endswith(TRAJECTORIES)]
+    tops = [p for p in paths if _is_top(p)]
+    trajs = [p for p in files if p.lower().endswith(TRAJECTORIES)]
     if not tops:
         raise ValueError("Нужен хотя бы один файл структуры (.gro или .pdb)")
     if len(trajs) > 1:
@@ -220,6 +327,9 @@ def _check(paths):
 def _read(paths, stride, max_frames):
     contents = {}
     for path in paths:
+        if isinstance(path, _Mol):
+            contents[path] = path.text.encode("utf-8")
+            continue
         with open(path, "rb") as fh:
             raw = fh.read()
         if path.lower().endswith(TRAJECTORIES):
@@ -235,8 +345,9 @@ def _payload(contents, compress, wrap, cmds=(), atom_data=None, b=None):
                          "Уменьшите max_frames или увеличьте stride".format(total / 2 ** 20, MAX_PAYLOAD_MB))
     files = []
     for path, raw in contents.items():
-        entry = {"name": os.path.basename(path)}
-        if compress or path.lower().endswith(TRAJECTORIES):
+        mol = isinstance(path, _Mol)
+        entry = {"name": path.name if mol else os.path.basename(path)}
+        if compress or (not mol and path.lower().endswith(TRAJECTORIES)):
             entry["gz"] = base64.b64encode(zlib.compress(raw, 6)).decode("ascii")
         else:
             entry["text"] = raw.decode("utf-8", errors="replace")
@@ -263,22 +374,24 @@ def render_html(*paths, height=600, compress=True, wrap=True, cmd=None, data=Non
     cmds = _cmd_list(cmd)
     data, b = _atom_data(paths, data, b)
     contents = _read(paths, stride, max_frames)
-    thinned = any(len(raw) != os.path.getsize(p) for p, raw in contents.items())
+    files = [p for p in paths if not isinstance(p, _Mol)]
+    thinned = any(len(contents[p]) != os.path.getsize(p) for p in files)
     note = ""
     hub = _hub_viewer()
     if hub:
-        rels = [_server_path(p) for p in paths]
-        if None not in rels and not data and b is None and not thinned:
+        rels = [_server_path(p) for p in files]
+        mols = len(files) < len(paths)   # молекулы — всегда через ноутбук, без пояснения
+        if not mols and None not in rels and not data and b is None and not thinned:
             return """
 <div style="border:1px solid #d0d7de;border-radius:8px;overflow:hidden;background:#fff">
   <iframe src="{src}" title="WebMol — просмотрщик GROMACS" style="width:100%;height:{height}px;border:0;display:block"
           allow="clipboard-write"></iframe>
 </div>
 """.format(src=escape(_hub_src(hub, rels, wrap, cmds), quote=True), height=int(height))
-        outside = [p for p, r in zip(paths, rels) if r is None]
+        outside = [p for p, r in zip(files, rels) if r is None]
         if outside:
             why = "Файлы вне папки сервера (или скрытые): {} — переданы".format(escape(", ".join(outside)))
-        elif data or b is not None:
+        elif (data or b is not None) and not mols:
             why = "Данные по атомам (data=, b=) в адрес окна не помещаются: файлы и данные переданы"
         else:
             why = None
@@ -318,11 +431,14 @@ def render_html(*paths, height=600, compress=True, wrap=True, cmd=None, data=Non
 
 def show(*paths, height=600, compress=True, wrap=True, cmd=None, data=None, b=None,
          stride=None, max_frames=MAX_FRAMES):
-    """Показать структуру и, по желанию, траекторию GROMACS под ячейкой в WebMol.
+    """Показать структуру и, по желанию, траекторию GROMACS (или молекулу RDKit) под ячейкой в WebMol.
 
     paths    -- .gro/.pdb и не больше одного .xtc/.trr (порядок любой; с траекторией — одна структура);
                 одноимённые структуры — состояния одного объекта, разноимённые — разные объекты:
                 show("alphaR/ala2.pdb", "beta/ala2.pdb")
+                Структура может быть и молекулой RDKit с координатами (конформеры — состояния) или словарём
+                {имя объекта: молекула}; без словаря имя — _Name молекулы или mol1, mol2, …:
+                show(gauche, anti), show({"gauche": gauche, "anti": anti}), show("trypsin.pdb", ligand)
     height   -- высота окна, px
     compress -- сжимать текстовые файлы при передаче (.xtc/.trr сжимаются всегда)
     wrap     -- «целые молекулы»: собрать молекулы, разрезанные границей ячейки (переключается и в окне)
@@ -333,8 +449,8 @@ def show(*paths, height=600, compress=True, wrap=True, cmd=None, data=None, b=No
                 show("md.gro", "md.xtc", b=rmsf_nm, cmd="spectrum b, blue_white_red, name CA")
     stride   -- показывать каждый stride-й кадр траектории; по умолчанию подбирается так, чтобы кадров было
                 не больше max_frames (100); явный stride отменяет max_frames, stride=1 — все кадры
-    Длина data[…] и b — число атомов структуры, иначе ValueError. На хабе с data/b и с прореженной траекторией
-    всё идёт через ноутбук.
+    Длина data[…] и b — число атомов структуры, иначе ValueError. На хабе с data/b, с прореженной траекторией
+    и с молекулами всё идёт через ноутбук.
     """
     if HTML is None:
         raise RuntimeError("show() работает только внутри Jupyter")
